@@ -90,12 +90,12 @@ class Agent:
                 with torch.no_grad():
                     Qs_next = self.net(torch.FloatTensor(n))
                     Qmax = torch.max(Qs_next)
-                y = r + Qmax
+                y = r + self.gamma * Qmax
 
             l += (y - Q)**2
         return l
 
-    def train(self, n_ep, minbatchsize=1000):
+    def train(self, n_ep, minbatchsize=100):
         rewards = list()
         eps = list()
         self.epsilon = 1
