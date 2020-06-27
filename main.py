@@ -9,14 +9,17 @@ from random import random, choice, sample
 from operator import itemgetter
 
 
+DEVICE = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+print(f"Training on: {DEVICE}")
+
 
 class Net(nn.Module):
 
     def __init__(self):
         super(Net, self).__init__()
-        self.fc1 = nn.Linear(4,48)
+        self.fc1 = nn.Linear(8,48)
         self.fc2 = nn.Linear(48,48)
-        self.fc3 = nn.Linear(48,2)
+        self.fc3 = nn.Linear(48,4)
 
     def forward(self, x):
         x = self.fc1(x)
@@ -33,12 +36,12 @@ class Agent:
         self.lr = 0.001
         self.epsilon = 1
         self.gamma = 0.95
-        self.net = Net()
+        self.net = Net().to(DEVICE)
         self.optim = optim.RMSprop(self.net.parameters(), lr=self.lr)
         self.replaybuffer = list()
         self.maxbuf = 10000
-        self.env = gym.make('CartPole-v1')
-        self.actions = [0,1]
+        self.env = gym.make('LunarLander-v2')
+        self.actions = [0,1,2,3]
 
     def rollout(self, draw=False):
         # TODO: reward to go should bootstrap from Q value and not use actual future reward for comparability with paper
@@ -47,6 +50,7 @@ class Agent:
         rewards = list()
         flags = list()
         state = self.env.reset()
+        state = torch.FloatTensor(state).to(DEVICE)
         done = False
         states.append(state)
         while not done:
@@ -58,12 +62,15 @@ class Agent:
                 action = choice(self.actions)
             else:
                 with torch.no_grad():
-                    Qs = self.net(torch.FloatTensor(state))
+                    Qs = self.net(state)
                     idx = torch.argmax(Qs)
-                action = self.actions[idx.detach().numpy()]
+                action = self.actions[idx.to("cpu").detach().numpy()]
 
-            actions.append(action)
+
             state, rew, done, _ = self.env.step(action)
+            state = torch.FloatTensor(state).to(DEVICE)
+            action = torch.LongTensor([action]).to(DEVICE)
+            actions.append(action)
             states.append(state)
             rewards.append(rew)
             flags.append(done)
@@ -80,15 +87,14 @@ class Agent:
     def loss(self, sample):
         l = 0
         for s,a,r,n,d in sample:
-            Qs = self.net(torch.FloatTensor(s))
-            a = torch.LongTensor([a])
+            Qs = self.net(s)
             Q = torch.index_select(Qs, index=a, dim=0)
 
             if d:
                 y = r
             else:
                 with torch.no_grad():
-                    Qs_next = self.net(torch.FloatTensor(n))
+                    Qs_next = self.net(n)
                     Qmax = torch.max(Qs_next)
                 y = r + self.gamma * Qmax
 
@@ -100,6 +106,8 @@ class Agent:
         eps = list()
         self.epsilon = 1
         for i in range(n_ep):
+            if i % 50 == 0:
+                print(f"Iteration: {i}")
             eps.append(self.epsilon)
             memory, reward = self.rollout()
             self.optim.zero_grad()
@@ -117,7 +125,7 @@ class Agent:
                 self.replaybuffer = self.replaybuffer[overflow:]
 
             # update epsilon
-            self.epsilon = np.exp(-(1/2000)*i)
+            self.epsilon = np.exp(-(1/4000)*i)
 
         return rewards, eps
 
@@ -130,7 +138,7 @@ class Agent:
         return rewards
 
 agent = Agent()
-rewards, epsilons = agent.train(1000)
+rewards, epsilons = agent.train(10000)
 eval_rewards = agent.evaluate(100)
 
 plt.figure()
